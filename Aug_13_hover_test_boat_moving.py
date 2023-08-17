@@ -55,8 +55,10 @@ from tf.transformations import quaternion_from_euler
 from ar_track_alvar_msgs.msg import AlvarMarkers
 from sensor_msgs.msg import Range
 from datetime import datetime
+import subprocess
 
 # from sensor_msgs.msg import LaserScan
+# from px4_msgs.msg import VehicleCommand
 
 # from std_srvs.srv import Empty
 class MavrosOffboardPosctlTest(MavrosTestCommon):
@@ -75,9 +77,9 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.vel_flag = False
         # self.radius = 1
         self.radius = 0.5
-        self.barrier_x = 10
-        self.barrier_y = 10
-        self.barrier_z = 10
+        self.barrier_x = 1000#10
+        self.barrier_y = 1000#10
+        self.barrier_z = 100#10
         self.x0 = 0
         self.y0 = 0
         self.z0 = 0
@@ -99,6 +101,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.ar_flag_s = False
         self.ar_sub = rospy.Subscriber("/ar_pose_marker", AlvarMarkers, self.ar_callback)
         self.height_from_rangesensor = 0
+        self.height_from_lidar = 0
         # self.height_sub = rospy.Subscriber("/mavros/distance_sensor/hrlv_ez4_pub", Range, self.height_callback)
         self.height_sub = rospy.Subscriber("/mavros/distance_sensor/lidarlite_pub", Range, self.height_callback)
         # self.height_sub = rospy.Subscriber("/laser/scan", LaserScan, self.height_callback)
@@ -110,9 +113,12 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.ex_prior = 0
         self.ey_prior = 0
 
-        self.h_for_small_marker = 1 # 0.5 # 0.4
+        self.h_for_small_marker = 2.5 #1.6 # 1 # 0.5 # 0.4
         self.autoland_flag = False
+        self.end_velocity_control = False
         self.count_low_height = 0
+        self.count_low_lidar = 0
+        self.mavros_kill_flag = False
         self.flight_mode = False # True: real flight,  False: simulation
 
     def tearDown(self):
@@ -123,9 +129,12 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
     #
 
     def height_callback(self, data):
-        self.height_from_rangesensor = data.range  # real
+        #self.height_from_rangesensor = data.range  # real
+        self.height_from_rangesensor = self.altitude.relative
+        self.height_from_lidar = data.range
         if self.autoland_flag == True:
-            rospy.loginfo("Height: {0:0.2f}".format(self.height_from_rangesensor))
+            rospy.loginfo("lidar: {0:0.2f}".format(self.self.height_from_lidar))
+            rospy.loginfo("barmeter: {0:0.2f}".format(self.height_from_rangesensor)) # self.altitude.relative
         # self.height_from_rangesensor = data.ranges[0] # simulation
         # rospy.loginfo("Height: {0:0.2f}".format(self.height_from_rangesensor))
 
@@ -134,89 +143,88 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.ar_flag = False
         self.ar_flag_s = False
 
-        if data.markers == []:
-            rospy.loginfo("no marker detect")
+        if self.end_velocity_control == False:
+            if data.markers == []:
+                rospy.loginfo("no marker detect")
 
-        else:
-            id_list = []
-            for i in range(len(data.markers)):
-                id_list.append(data.markers[i].id)
-            rospy.loginfo("show all marker id_list {0}".format(id_list))
+            else:
+                id_list = []
+                for i in range(len(data.markers)):
+                    id_list.append(data.markers[i].id)
+                rospy.loginfo("show all marker id_list {0}".format(id_list))
 
-            id_large = 0
-            id_small = 1
+                id_large = 0
+                id_small = 1
 
-            if id_large in id_list:
-                self.ar_flag = True
-                indx_large = id_list.index(id_large)
-                x = data.markers[indx_large].pose.pose.position.x
-                y = data.markers[indx_large].pose.pose.position.y
-                z = data.markers[indx_large].pose.pose.position.z
+                if id_large in id_list:
+                    self.ar_flag = True
+                    indx_large = id_list.index(id_large)
+                    x = data.markers[indx_large].pose.pose.position.x
+                    y = data.markers[indx_large].pose.pose.position.y
+                    z = data.markers[indx_large].pose.pose.position.z
 
-                try:
-                    qx = data.markers[indx_large].pose.pose.orientation.x
-                    qy = data.markers[indx_large].pose.pose.orientation.y
-                    qz = data.markers[indx_large].pose.pose.orientation.z
-                    qw = data.markers[indx_large].pose.pose.orientation.w
-                    yaw = math.atan2(2.0 * (qw * qz + qx * qy),
-                                     qw * qw + qx * qx - qy * qy - qz * qz)  # -3.14 sim will be 0
-                    if self.flight_mode == True:
-                        pass
-                    else:
-                        if yaw < 0:
-                            yaw = 6.28 + yaw
-                except Exception:
-                    if self.flight_mode == True:
-                        yaw = 0  # real-world
-                    else:
-                        yaw = 3.14
+                    try:
+                        qx = data.markers[indx_large].pose.pose.orientation.x
+                        qy = data.markers[indx_large].pose.pose.orientation.y
+                        qz = data.markers[indx_large].pose.pose.orientation.z
+                        qw = data.markers[indx_large].pose.pose.orientation.w
+                        yaw = math.atan2(2.0 * (qw * qz + qx * qy),
+                                         qw * qw + qx * qx - qy * qy - qz * qz)  # -3.14 sim will be 0
+                        if self.flight_mode == True:
+                            pass
+                        else:
+                            if yaw < 0:
+                                yaw = 6.28 + yaw
+                    except Exception:
+                        if self.flight_mode == True:
+                            yaw = 0  # real-world
+                        else:
+                            yaw = 3.14
 
-                if self.height_from_rangesensor >= self.h_for_small_marker:  # tracker big marker
-                    if self.flight_mode == True:
-                        self.ar_x = y  # real drone bias            # tag on the back side of the drone is negative. vx = 0-(-ar_x) = negative so fly back
-                        self.ar_y = x  # tag on the left side of drone is positive.     vy = 0-(-ar_y) = positive so fly left
-                    else:
-                        self.ar_x = -y  # simulation
-                        self.ar_y = -x
-                    self.ar_yaw = yaw
-                rospy.loginfo(
-                    "id 16 indx_large = {0},  pos = [ {1:.2f}, {2:.2f} ]  yaw = {3:.2f}".format(id_list.index(id_large), x, y, yaw))
+                    if self.height_from_rangesensor >= self.h_for_small_marker:  # tracker big marker
+                        if self.flight_mode == True:
+                            self.ar_x = y  # real drone bias            # tag on the back side of the drone is negative. vx = 0-(-ar_x) = negative so fly back
+                            self.ar_y = x  # tag on the left side of drone is positive.     vy = 0-(-ar_y) = positive so fly left
+                        else:
+                            self.ar_x = -y  # simulation
+                            self.ar_y = -x
+                        self.ar_yaw = yaw
+                    rospy.loginfo("id 16 indx_large = {0},  pos = [ {1:.2f}, {2:.2f} ]  yaw = {3:.2f}".format(id_list.index(id_large), x, y, yaw))
 
-            if id_small in id_list:
-                self.ar_flag_s = True
-                indx_small = id_list.index(id_small)
-                x = data.markers[indx_small].pose.pose.position.x
-                y = data.markers[indx_small].pose.pose.position.y
-                z = data.markers[indx_small].pose.pose.position.z
+                if id_small in id_list:
+                    self.ar_flag_s = True
+                    indx_small = id_list.index(id_small)
+                    x = data.markers[indx_small].pose.pose.position.x
+                    y = data.markers[indx_small].pose.pose.position.y
+                    z = data.markers[indx_small].pose.pose.position.z
 
-                try:
-                    qx = data.markers[indx_large].pose.pose.orientation.x
-                    qy = data.markers[indx_large].pose.pose.orientation.y
-                    qz = data.markers[indx_large].pose.pose.orientation.z
-                    qw = data.markers[indx_large].pose.pose.orientation.w
-                    yaw = math.atan2(2.0 * (qw * qz + qx * qy),
-                                     qw * qw + qx * qx - qy * qy - qz * qz)  # -3.14 sim will be 0
-                    if self.flight_mode == True:
-                        pass
-                    else:
-                        if yaw < 0:
-                            yaw = 6.28 + yaw
-                except Exception:
-                    if self.flight_mode == True:
-                        yaw = 0  # real-world
-                    else:
-                        yaw = 3.14
+                    try:
+                        qx = data.markers[indx_large].pose.pose.orientation.x
+                        qy = data.markers[indx_large].pose.pose.orientation.y
+                        qz = data.markers[indx_large].pose.pose.orientation.z
+                        qw = data.markers[indx_large].pose.pose.orientation.w
+                        yaw = math.atan2(2.0 * (qw * qz + qx * qy),
+                                         qw * qw + qx * qx - qy * qy - qz * qz)  # -3.14 sim will be 0
+                        if self.flight_mode == True:
+                            pass
+                        else:
+                            if yaw < 0:
+                                yaw = 6.28 + yaw
+                    except Exception:
+                        if self.flight_mode == True:
+                            yaw = 0  # real-world
+                        else:
+                            yaw = 3.14
 
-                if self.height_from_rangesensor < self.h_for_small_marker:  # tracker big marker
-                    if self.flight_mode == True:
-                        self.ar_x = y  # real drone bias            # tag on the back side of the drone is negative. vx = 0-(-ar_x) = negative so fly back
-                        self.ar_y = x  # tag on the left side of drone is positive.     vy = 0-(-ar_y) = positive so fly left
-                    else:
-                        self.ar_x = -y  # simulation
-                        self.ar_y = -x
-                    self.ar_yaw = yaw
-                rospy.loginfo(
-                    "id 2  indx_small = {0},  pos = [ {1:.2f}, {2:.2f} ] yaw = {3:.2f}".format(id_list.index(id_small), x, y, yaw))
+                    if self.height_from_rangesensor < self.h_for_small_marker:  # tracker big marker
+                        if self.flight_mode == True:
+                            self.ar_x = y  # real drone bias            # tag on the back side of the drone is negative. vx = 0-(-ar_x) = negative so fly back
+                            self.ar_y = x  # tag on the left side of drone is positive.     vy = 0-(-ar_y) = positive so fly left
+                        else:
+                            self.ar_x = -y  # simulation
+                            self.ar_y = -x
+                        self.ar_yaw = yaw
+                    rospy.loginfo("id 2  indx_small = {0},  pos = [ {1:.2f}, {2:.2f} ] yaw = {3:.2f}".format(id_list.index(id_small), x, y, yaw))
 
             # if data.markers[0].id == 16:
             # self.ar_flag = True
@@ -279,7 +287,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
                    self.local_position.pose.position.z))
 
         # For demo purposes we will lock yaw/heading to north.
-        yaw_degrees = -90  # North    # 0 degree = East   #  -90 degree = south
+        yaw_degrees = -90  # North    # 0 degree = North   #  -90 degree = south
         yaw = math.radians(yaw_degrees)
         quaternion = quaternion_from_euler(0, 0, yaw)
         self.pos.pose.orientation = Quaternion(*quaternion)
@@ -307,6 +315,31 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
             format(self.local_position.pose.position.x,
                    self.local_position.pose.position.y,
                    self.local_position.pose.position.z, timeout)))
+
+    def run_mavsafety_kill(self):
+        try:
+            # Run the 'rosrun' command with 'mavros' package and 'mavsafety kill' arguments
+            subprocess.run(['rosrun', 'mavros', 'mavsafety', 'kill'], check=True)
+        except subprocess.CalledProcessError as e:
+            rospy.loginfo("Error running command:", e)
+
+
+    # def send_vehicle_command(connection, command, param1, param2, target_system=1, target_component=1):
+    #     msg = connection.mav.command_long_encode(
+    #         target_system=target_system,
+    #         target_component=target_component,
+    #         command=command,
+    #         confirmation=0,
+    #         param1=param1,
+    #         param2=param2,
+    #         param3=0,
+    #         param4=0,
+    #         param5=0,
+    #         param6=0,
+    #         param7=0
+    #     )
+    #     connection.mav.send(msg)
+
 
     def send_vel(self, vx, vy, vz, timeout):
         self.vel.twist.linear.x = vx
@@ -551,7 +584,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         derivative_x = (ex - self.ex_prior) / iter_time
         derivative_y = (ey - self.ey_prior) / iter_time
         # PID
-        K_P = 1.2 #0.8 #0.3  #0.4 # 0.8 # 1.56
+        K_P = 2.0 #0.8 #0.3  #0.4 # 0.8 # 1.56
         K_I = 0 # 0.121
         K_D = 0 #0.4 # 0.245
         vx = K_P * ex + K_I * integral_x + K_D * derivative_x  # pos forward
@@ -564,9 +597,9 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.ey_prior = ey
 
         # boundary
-        if abs(vx) > 1.2:   # 1
+        if abs(vx) > 12:   # 1
             vx = np.sign(vx) * 1.2
-        if abs(vy) > 1.2:   # 1            
+        if abs(vy) > 12:   # 1
             vy = np.sign(vy) * 1.2
         eyaw = gyaw - ar_yaw
         # boundary
@@ -596,8 +629,8 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         derivative_x = (ex - self.ex_prior) / iter_time
         derivative_y = (ey - self.ey_prior) / iter_time
         # PID
-        K_P = 0.6  # 0.3
-        K_I = 0   # 0.01
+        K_P = 0.6  #4.0 #0.6  # 0.3
+        K_I = 0.1   # 0.01
         K_D = 0   # 0.02
         vx = K_P * ex + K_I * integral_x + K_D * derivative_x  # pos forward
         vy = K_P * ey + K_I * integral_y + K_D * derivative_y  # pos to left
@@ -609,9 +642,9 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.ey_prior = ey
 
         # boundary
-        if abs(vx) > 1.2:    # 1
+        if abs(vx) > 12:    # 1
             vx = np.sign(vx) * 1.2
-        if abs(vy) > 1.2:      # 1
+        if abs(vy) > 12:      # 1
             vy = np.sign(vy) * 1.2
 
         eyaw = gyaw - ar_yaw
@@ -627,7 +660,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         vx = vx_inital
         vy = vy_inital
         vz = 0.05  # keep in the air
-        vyaw = 0
+        vyaw = 0   # 0 East
         h = h_start  # 1.2 meter
         time_for_aiming_target = 6  # second
         loop_freq = 20  # Hz
@@ -777,8 +810,8 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         rate = rospy.Rate(loop_freq)
         time_for_aiming_target = time_for_aiming_target * loop_freq
 
-        self.vel.twist.linear.x = vx
-        self.vel.twist.linear.y = vy
+        self.vel.twist.linear.x = vy   # drone_boat_simulation
+        self.vel.twist.linear.y = -vx   # drone_boat_simulation
         self.vel.twist.linear.z = vz
 
         self.vel_flag = True  # start to use the velocity control
@@ -818,10 +851,10 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
                 rospy.loginfo("height_from_rangesensor is inf, fly upper")
             elif self.height_from_rangesensor == float(
                     "inf") and h <= 0.07:  # h goal is small than the min distance so fly down
-                vz = -0.07 # -0.06 # -0.07
+                vz = -0.1 # -0.06 # -0.07
                 rospy.loginfo("height_from_rangesensor is inf, fly down")
             elif self.height_from_rangesensor > h + 0.05:
-                vz = -0.07 # -0.06 # -0.07
+                vz = -0.1 # -0.06 # -0.07
                 rospy.loginfo("height_from_rangesensor too high, fly down")
             elif self.height_from_rangesensor < h - 0.05:
                 vz = 1.00 #0.08 # 0.07
@@ -830,7 +863,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
                 vz = 0.07 # 0.05
                 rospy.loginfo("height_from_rangesensor in the h range, keep same height")
 
-            rospy.loginfo("H_Goal:{0:.2f} H_measured:{1:.2f}".format(h, self.height_from_rangesensor))
+            rospy.loginfo("H_Goal:{0:.2f} barmeter:{1:.2f} lidar:{2:.2f}".format(h, self.height_from_rangesensor, self.height_from_lidar))
             # First find ar tag to set the land_flag true
             if self.ar_flag == True:
                 self.land_flag = True  # find the first ar code, start to decend
@@ -846,7 +879,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
 
                 if time_for_aiming_target == 0:
                     #decend_val = h_start / (timeout * loop_freq)
-                    h = h  -0.0017 #- 0.002 # - 0.05  # keep decend   can increase the time stay in the air, if you adjust this interval small than 0.05
+                    h = h -0.01 #-0.0017 #- 0.002 # - 0.05  # keep decend   can increase the time stay in the air, if you adjust this interval small than 0.05
                     #
                     rospy.loginfo("Start to decend") # hover
 
@@ -891,19 +924,28 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
 
 
                 # low enough for land
-                if self.height_from_rangesensor < h_min_for_land:
-                    rospy.loginfo("reach h_min_for_land and start to land ")
+                if self.height_from_rangesensor < h_min_for_land:  # 1.3
                     self.count_low_height = self.count_low_height + 1
+                    rospy.loginfo("reach h_min_for_land and start to land {0} time".format(self.count_low_height))
+
 
                 if self.count_low_height >= 3:
-                    rospy.loginfo("enough time to triger lower distance")
-                    break # June 4 .2023
+                    rospy.loginfo("over 3 time barmeter limit, now start to count lidar")
+
+                    if self.height_from_lidar < 0.25:  # lidar min height
+                        self.count_low_lidar = self.count_low_lidar + 1
+                        rospy.loginfo("reach lidar min height {0} time".format(self.count_low_lidar))
+
+                    if self.count_low_lidar >= 3:
+                        rospy.loginfo("over 3 time lidar limit, now to force disarm ")
+                        self.mavros_kill_flag = True
+                        break # June 4 .2023
 
 
-            self.vel.twist.linear.x = vx
-            self.vel.twist.linear.y = vy
+            self.vel.twist.linear.x = vy   # drone_boat_simulation
+            self.vel.twist.linear.y = -vx   # drone_boat_simulation
             self.vel.twist.linear.z = vz
-            self.vel.twist.angular.z = vyaw
+            self.vel.twist.angular.z = 0
 
             cur_time = i * 1.0 / loop_freq
             rospy.loginfo(
@@ -924,8 +966,9 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.vel_flag = False
         self.vel.twist.linear.x = 0
         self.vel.twist.linear.y = 0
-        self.vel.twist.linear.z = 0
+        self.vel.twist.linear.z = -0.07
         self.vel.twist.angular.z = 0  # stop rotating
+        self.end_velocity_control = True # stop publishing marker
 
     #
     # Test method
@@ -980,7 +1023,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
             self.set_arm(False, 5)
         ##### Check GPS safty ######
 
-        positions = [[0, 0, 2]]
+        positions = [[0, -5, 5]]   # move forward 1 meter
 
         for update_pos in positions:
             update_pos[0] = update_pos[0] + self.x0
@@ -1011,18 +1054,45 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         # self.send_vel_land(h_start, h_min_for_land, timeout)
 
         # move forward and detect target
-        vx_inital = 0.4  # move forward until find the target
+        vx_inital = 0  # move forward until find the target
         vy_inital = 0  # move left is postive
-        h_start = 2
-        h_min_for_land = 0.25 # 0.1
+        h_start = 5
+        h_min_for_land = 1.3 # 0.25 # 0.1
         timeout = 60  # max move distance 0.2*40 = 8 meter
         #self.move_forward_and_land(vx_inital, vy_inital, h_start, h_min_for_land, timeout)
         self.move_hover_land(vx_inital, vy_inital, h_start, h_min_for_land, timeout)
         rospy.loginfo("========================================================End velocity control")
-
         self.set_mode("AUTO.LAND", 5)
-        #self.wait_for_landed_state(mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND,45, 0)
-        self.set_arm(False, 5)
+
+        if self.mavros_kill_flag == True:
+            rospy.loginfo("================= Please notice will trigger force disarm in five seconds =============== ")
+            #rospy.sleep(5)  # Sleeps for 5 sec
+            rospy.loginfo("======================================================== Force disarm")
+            connection = mavutil.mavlink_connection('udp:localhost:14540')
+            # command = 400
+            # param1 = 0  # 1 to ARM, 0 to DISARM
+            # param2 = 21196  # Custom parameter (set to whatever value you need)
+            msg = connection.mav.command_long_encode(
+                target_system=1,        # Target system ID
+                target_component=1,     # Target component ID
+                command=400,
+                confirmation=0,
+                param1=0,
+                param2=21196,
+                param3=0,
+                param4=0,
+                param5=0,
+                param6=0,
+                param7=0
+            )
+            connection.mav.send(msg)
+
+            rospy.loginfo("========================================================run_mavsafety_kill")
+            self.run_mavsafety_kill()
+        else:
+            self.wait_for_landed_state(mavutil.mavlink.MAV_LANDED_STATE_ON_GROUND,45, 0)
+            self.set_arm(False, 5)
+
 
         rospy.loginfo("========================================================End re set world")
         rospy.sleep(5)  # Sleeps for 1 sec
