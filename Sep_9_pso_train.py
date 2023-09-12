@@ -39,9 +39,9 @@ n_particles = 5
 np.random.seed(100)
 
 # X = np.random.rand(2, n_particles) * 5
-x0 = np.random.rand(1, n_particles) * 2   # KP
-x1 = np.random.rand(1, n_particles) * 1   # KI
-x2 = np.random.rand(1, n_particles) * 1   # KD
+x0 = np.random.rand(1, n_particles) * 10  # 2   # KP
+x1 = np.random.rand(1, n_particles) * 5 # 1   # KI
+x2 = np.random.rand(1, n_particles) * 5 # 1   # KD
 X = np.vstack([x0, x1, x2])
 V = np.random.randn(3, n_particles) * 0.1    # KDI
 
@@ -55,16 +55,23 @@ for i in range(n_particles):
     write_data('Kp.txt',X[0][i])
     write_data('Ki.txt',X[1][i])
     write_data('Kd.txt',X[2][i])
-    os.system("python Jan_31_PSO_PID_h_sim_move_land_height_Aruco_Barrier_GPS_initial_velocity.py")
-    time.sleep(3)
+
+    curr_iter = read_data('iter.txt')
+    end_iter = curr_iter + 1
+    while curr_iter < end_iter:
+        os.system("python Aug_16_horizontal_tracking_error_for_pso_train.py")
+        time.sleep(3)
+        curr_iter = read_data('iter.txt')
+        print("leave from iter ")
+
+
     f_result = read_data('f_result.txt')
     pbest_obj[i] = f_result
 
     filename = str(i) + "th_particle_PID_result.txt"
     save_global(filename, X[0][i], X[1][i], X[2][i], f_result) # save every particle
     #clean_ros()
-    os.system("rm -rf /home/lifan/.ros/* ")
-
+    #os.system("rm -rf /home/lifan/.ros/* ")
 
 # global saving
 print("pbest_obj:" + str(pbest_obj))
@@ -73,14 +80,14 @@ print("Ki:"+ str(x1))
 print("Kd:"+ str(x2))
 gbest = pbest[:, pbest_obj.argmin()]
 gbest_obj = pbest_obj.min()
+print("gbest: "+str(gbest))
+print("gbest_obj: "+str(gbest_obj))
+save_global("best_particle_PID_result.txt", gbest[0], gbest[1], gbest[2], gbest_obj)  # save best particle
+# do I need this line ?
 
 print("=================== Initialize data Completed =============== ")
 
-print("gbest: "+str(gbest))
-print("gbest_obj: "+str(gbest_obj))
-# raise SystemExit(0)
-
-
+# read and save V, X, pbest, pbest_obj, gbest, gbest_obj
 
 def update():
     "Function to do one iteration of particle swarm optimization"
@@ -97,13 +104,29 @@ def update():
         write_data('Kp.txt', X[0][i])
         write_data('Ki.txt', X[1][i])
         write_data('Kd.txt', X[2][i])
-        os.system("python Jan_31_PSO_PID_h_sim_move_land_height_Aruco_Barrier_GPS_initial_velocity.py")
-        time.sleep(3)
+        #os.system("python Jan_31_PSO_PID_h_sim_move_land_height_Aruco_Barrier_GPS_initial_velocity.py")
+        #time.sleep(3)
+
+        curr_iter = read_data('iter.txt')
+        end_iter = curr_iter + 1
+        one_particle_repeat_time = 0
+        while curr_iter < end_iter:
+            os.system("python Aug_16_horizontal_tracking_error_for_pso_train.py")
+            time.sleep(3)
+            curr_iter = read_data('iter.txt')  # make curr_iter == end_iter, means python script succesffuly execute
+            if one_particle_repeat_time > 0:  # count one particle repeat time, use 20 second to restart environment
+                for k in range(20):
+                    print("get stuck in one particle, repeat "+ str(one_particle_repeat_time) + " times and wait for"+ str(k)+"/20 seconds")
+                    print("please restart gazebo and environment")
+                    time.sleep(1)
+            one_particle_repeat_time = one_particle_repeat_time + 1
+            print("leave from iter ")
+
         f_result = read_data('f_result.txt')
         obj[i] = f_result
         filename = str(i)+"th_particle_PID_result.txt"
         save_global(filename, X[0][i], X[1][i], X[2][i], f_result)       # save every particle
-        os.system("rm -rf /home/lifan/.ros/* ")
+        #os.system("rm -rf /home/zihan/.ros/* ")
 
     pbest[:, (pbest_obj >= obj)] = X[:, (pbest_obj >= obj)]
     pbest_obj = np.array([pbest_obj, obj]).min(axis=0)
@@ -113,7 +136,7 @@ def update():
     save_global("best_particle_PID_result.txt", gbest[0], gbest[1], gbest[2], gbest_obj)  # save best particle
 
 
-for i in range(100):
+for i in range(50):
     update()
     print("=================== training iter :" + str(i) + "=============== ")
 

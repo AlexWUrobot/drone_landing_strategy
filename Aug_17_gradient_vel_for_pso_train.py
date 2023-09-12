@@ -142,6 +142,8 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.tracking_error_y = []
 
         self.first_marker_arrive_center = False
+        self.iris_vel_cmd_x = 0
+        self.iris_vel_cmd_y = -1.8
         # self.height_sub = rospy.Subscriber("/mavros/distance_sensor/hrlv_ez4_pub", Range, self.height_callback)
         self.height_sub = rospy.Subscriber("/mavros/distance_sensor/lidarlite_pub", Range, self.height_callback)
         # self.height_sub = rospy.Subscriber("/laser/scan", LaserScan, self.height_callback)
@@ -439,7 +441,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
                 rospy.loginfo("send speed at x:{0:.3f} y:{1:.3f} z:{2}, yaw:{3}".format(vx,vy,vz,yaw))  # add by 2023-05-29
                 self.vel_pub.publish(self.vel)
 
-                rospy.loginfo("send boat speed 2.29 m/s")
+                #rospy.loginfo("send boat speed 2.29 m/s")
                 wamv_v = Twist()
                 wamv_v.linear.x = 2.29 #0.5  # max speed
                 self.wamv_pub.publish(wamv_v)
@@ -513,8 +515,6 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
             subprocess.run(['rosrun', 'mavros', 'mavsafety', 'kill'], check=True)
         except subprocess.CalledProcessError as e:
             rospy.loginfo("Error running command:", e)
-
-
     # def send_vehicle_command(connection, command, param1, param2, target_system=1, target_component=1):
     #     msg = connection.mav.command_long_encode(
     #         target_system=target_system,
@@ -530,7 +530,6 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
     #         param7=0
     #     )
     #     connection.mav.send(msg)
-
 
     def send_vel(self, vx, vy, vz, timeout):
         self.vel.twist.linear.x = vx
@@ -821,7 +820,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         derivative_x = (ex - self.ex_prior) / iter_time
         derivative_y = (ey - self.ey_prior) / iter_time
         # PID
-        K_P = 1.5  # 4.0 # 0.6  # 0.3
+        K_P = 2 # 4.0 # 0.6  # 0.3
         K_I = 0.02    # 0.1 # 0.1   # 0.01
         K_D = 0.02   # 0.02
         vx = K_P * ex + K_I * integral_x + K_D * derivative_x  # pos forward
@@ -1072,7 +1071,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
 
                 if time_for_aiming_target == 0:
                     #decend_val = h_start / (timeout * loop_freq)
-                    #h = h -0.01 #-0.0017 #- 0.002 # - 0.05  # keep decend   can increase the time stay in the air, if you adjust this interval small than 0.05
+                    #h = h -0.02 #-0.0017 #- 0.002 # - 0.05  # keep decend   can increase the time stay in the air, if you adjust this interval small than 0.05
                     rospy.loginfo("Start to decend") # hover
 
                 # Adjust land XY position, according to ar tag
@@ -1083,30 +1082,43 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
                         # PID control
                         # vx, vy , vyaw = self.vel_PID_controller(self.ar_x, self.ar_y, self.ar_yaw, loop_freq)
 
-                        if self.ar_y  < 0: # x  want to forward
+                        if self.ar_y < 0: # x  want to forward   <0  ar_tag front   >0 ar_tag back
                             self.first_marker_arrive_center = True
+
                         if self.first_marker_arrive_center == True:
-                            vx, vy , vyaw = self.vel_PID_controller(self.ar_x, self.ar_y, self.ar_yaw, loop_freq)
-                            vy = -1.8 + vy
+                            vx, vy, vyaw = self.vel_PID_controller(self.ar_x, self.ar_y, self.ar_yaw, loop_freq)  # 0.51
+                            #self.iris_vel_cmd_y = -1.8 + vy
+                            if self.ar_y < 0:  # ar_tag front speed up
+                                self.iris_vel_cmd_y = -3.6 #self.iris_vel_cmd_y -0.001  #-3.6
+                            else:              # ar_tag back  speed down
+                                self.iris_vel_cmd_y = -2 # self.iris_vel_cmd_y +0.001   #-2
+
+                            if self.ar_x < 0:  # ar_tag front speed up
+                                self.iris_vel_cmd_x =  0.1 #self.iris_vel_cmd_y -0.001  #-3.6
+                            else:              # ar_tag back  speed down
+                                self.iris_vel_cmd_x = -0.1 # self.iris_vel_cmd_y +0.001   #-2
+
+                            rospy.loginfo("ar_tag_y: {:.2f} iris cmd vel: {:.2f}, {:.2f}".format(self.ar_y, self.iris_vel_cmd_y, vy))
                         else:
                             vx = 0 # please wait for object move to the forward
-                            vy = -1.8
+                            #vy = -1.8
+                            self.iris_vel_cmd_y = -1.8
                             rospy.loginfo("================================================wait object move to center swith pose ================================================")
 
                     else:
                         # not find ar tag, fly higher
                         rospy.loginfo("no find ar tag, stay and keep up")
-                        vx = 0
-                        vy = 0
+                        #vx = 0
+                        #vy = 0
+                        self.iris_vel_cmd_y = 0
+                        self.iris_vel_cmd_x = 0
                         vyaw = 0
                         #h = h + 0.05
 
                 else:  # fly to a low position, change to tracker small tag
                     if self.ar_flag_s == True:
-
                         # PID control
                         vx, vy , vyaw= self.s_vel_PID_controller(self.ar_x, self.ar_y, self.ar_yaw, loop_freq)
-
                         rospy.loginfo("!!!!!!!!!!!!!!!!!!  detect small ar tag now !!!!!!!!!!!!!!!!!!!!!!")
                     else:
                         # not find ar tag, fly higher
@@ -1147,8 +1159,8 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
                         break # June 4 .2023
 
 
-            self.vel.twist.linear.x = vy   # drone_boat_simulation
-            self.vel.twist.linear.y = -vx   # drone_boat_simulation
+            self.vel.twist.linear.x = self.iris_vel_cmd_y #  vy   # drone_boat_simulation
+            self.vel.twist.linear.y = self.iris_vel_cmd_x # -vx   # drone_boat_simulation
             self.vel.twist.linear.z = vz
             self.vel.twist.angular.z = vyaw
 
@@ -1194,9 +1206,7 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         self.set_arm(True, 5)
 
         rospy.loginfo("run mission")
-
         ##### Check GPS safty ######
-
         x0_record = []
         y0_record = []
         rate = rospy.Rate(1)  # 1 Hz
@@ -1299,8 +1309,6 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
             # self.write_buffer_to_file('wamv',self.wamv_buffer)
             self.update_pso_iter()
 
-
-
             if len(self.tracking_error_x) == 0:
                 avg_xy = 100 # it means the drone do not see marker in the whole flight
                 rospy.loginfo("do not find any ar_tag")
@@ -1310,16 +1318,11 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
 
                 avg_err_x = sum(abs_err_x)/len(abs_err_x)
                 avg_err_y = sum(abs_err_y)/len(abs_err_y)
-
                 avg_xy = avg_err_x + avg_err_y
-
-
             # if avg_xy == 0:
             #     avg_xy = 100 # it means the drone do not see marker in the whole flight
 
-
-
-            rospy.loginfo("drone and tag xy distance: {0:.4f}".format(avg_xy))
+            rospy.loginfo("drone and tag xy distance: {0:.4f}, avg_x: {1:.2f}, avg_y: {2:.2f},".format(avg_xy,avg_err_x,avg_err_y))
             self.write_data('f_result.txt', avg_xy)
 
             # rospy.loginfo("========================================================Complete record buffer")
@@ -1335,7 +1338,6 @@ class MavrosOffboardPosctlTest(MavrosTestCommon):
         rospy.sleep(10)  # Sleeps for 1 sec
 
         rospy.loginfo("========================================================moving to the intial point")
-
         # reset_world
         #self.reset()
 
